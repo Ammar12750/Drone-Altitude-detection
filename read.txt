@@ -1,0 +1,11 @@
+"Demo02_forStudents.m" : Example program, to see how to read data, and using some useful API function.
+
+"FirsSteps_for_Project01.pdf" : partial early release, for starting working on Project1, during early week2.
+
+"API4010_v04.p" : API. Use this version, in program "Demo02_showData_forStudents.m".
+
+"RemovingGyrosBiasOFF_LINE_2025.pdf" : concept for the OFFLINE gyroscopes' biases estimation. 
+
+"API_v04__help.pdf"  : description of most of API_v04 functions (those to be used in Project1)
+
+"links.txt: : link to videos.
