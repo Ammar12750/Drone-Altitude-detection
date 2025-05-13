@@ -31,18 +31,27 @@ function main(ThisDataset)
   % Some shared variales.
   global SharedData
   SharedData.Depth = [];
-  SharedData.Attitude1 = [0; 0; 0];
-    API=[];
-    FFF = zeros(10,1);  FFF(1)=1;  % FFF is used as an array of flags.
-    main01(ThisDataset)
-  
+  SharedData.Attitude2 = [0; 0; 0];
+  fourchannel=[0;0;0;0];
+  fourchannelAPI=[0;0;0;0];
+  Bias=0; %Input you additional gyrobias between -3 to 3 here
+  ROI=[80 180;200 240]; 
+  API=[];
+  FFF = zeros(10,1);  FFF(1)=1;  % FFF is used as an array of flags.
+
+ 
+  % EKF Initialization
+  Xe = deg2rad([0; 0; 0]); % Initial state (radians)
+  P = (deg2rad(30)^2) * eye(3); % Covariance
+  ekf_started = false; % Flag to start EKF after t>15
+main01(ThisDataset)
  return;
 % ...........................................................
 
 function main01(ThisDataset)
  
  % initialize API
- API = API4010_v06();
+ API = API4010_v13();
      
  % Select a dataset to playBack. Use API function for that purpose.
  ok=API.e.SelectDataset(ThisDataset);
@@ -63,6 +72,8 @@ function main01(ThisDataset)
         
     PushScopes3Channels=API.c.PushScopes3Channels;
     IniScopes3Channels =API.c.IniScopes3Channels ;
+    IniScopes4Channels =API.c.IniScopes4Channels ;
+    PushScopes4Channels=API.c.PushScopes4Channels;
     % I copied the functions handles (or pointers), to local variables for easier referencing. 
     % Here, I create some oscilloscopes to show IMU measurements.
        
@@ -86,7 +97,7 @@ function main01(ThisDataset)
     
     
     % IniScopes3Channels() return an array of 3 handles (of graphic objects), each one asociated to a subfigure.
-    % the handles can be use to chane may of the properties.
+    % the handles can be use to1 chane may of the properties.
     
     set(hhScopesGyros,'LineWidth',1.5);           % e.g. here we define the thickness of the lines, for the 3 plots.
     set(hhScopesGyros(2),'color',[0.6,0.6,0]);    % here the color of the plot of the second channel.
@@ -99,16 +110,52 @@ function main01(ThisDataset)
     a=1.2 ;   hhScopesAcc  =IniScopes3Channels(31,400,-a,a,'3D accelerometers',{'ax','ay','az'}); cxA=0;
     set(31,'name','accXYZ');
     % default range, -/+ 1.2G
-    % To show Attitude1 in figure#35
+    % To show Attitude1 in figure#32
     a=50 ;   hhScopesAtti1 =IniScopes3Channels(32,800,-a,a,'3D Attitude1(For verification)',{'Roll','Pitch','Yaw'}); cxAtti1=0;
     set(32,'name','Attitudevalidate');
-    % To show Attitude1 in figure#35
+    % To show Attitude2 in figure#33
     a=50 ;   hhScopesAtti2 =IniScopes3Channels(33,800,-a,a,'3D Attitude2',{'Roll','Pitch','Yaw'}); cxAtti2=0;
     set(33,'name','Attitude');
+    % a=50 ;   hhScopesAtti3 =IniScopes3Channels(34,800,-a,a,'3D EKF Attitude3',{'Roll','Pitch','Yaw'}); cxAtti3=0;
+    % set(34,'name','EKF Attitude');
+    a=100;hhScopesEKF = IniScopes3Channels(34, 800, -a, a, 'Attitude Comparison', {'Roll', 'Pitch', 'Yaw'});
+    set(34, 'name', 'Attitude Comparison');
+    cxEKF = 0;
+    % Set colors for main (EKF) - red
+    set(hhScopesEKF, 'color', [1,0,0], 'LineWidth', 1.5);
+
+    % Add guest oscilloscope for Ground Truth (GT) - blue
+    hhScopesGT = IniScopes3Channels(34, 800, [], [], [], [], 1);
+    set(hhScopesGT, 'color', [0,1,0], 'LineWidth', 1.5);
+    cxGT = 0;
+
+    % Add guest oscilloscope for Uncalibrated - green
+    hhScopesUncal = IniScopes3Channels(34, 800, [], [], [], [], 1);
+    set(hhScopesUncal, 'color', [0,0,1], 'LineWidth', 1.5);
+    cxUncal = 0;
+
+    % To show AttitudeDiscripancy in figure#34
+    a=2 ;   hhScopesAttidisc =IniScopes3Channels(35,800,-a,a,'3D Attitude Discripancy',{'Roll','Pitch','Yaw'}); cxAttidisc=0;
+    set(35,'name','Attitude Discripancy');
+    % a=2 ;   hhScopesEKFAttidisc =IniScopes3Channels(36,800,-a,a,'3D Attitude EKF Discripancy',{'Roll','Pitch','Yaw'}); cxAttiEKFdisc=0;
+    % set(36,'name','Attitude EKF Discripancy');
     % default range, -/+ 50degrees
      a=1; % Adjust the range if needed (values in microteslas)
-    hhScopesMag = IniScopes3Channels(34,400,-a,a,'3D Magnetometer',{'Mx','My','Mz'}); cxM=0;
-    set(34,'name','Magnetometer');
+    hhScopesMag = IniScopes3Channels(36,400,-a,a,'3D Magnetometer',{'Mx','My','Mz'}); cxM=0;
+    set(36,'name','Magnetometer');
+     a=[100,100,100,20] ;   hhScopes4channel =IniScopes4Channels(37,800,-a,a,'4channel',{'Roll','Pitch','Altitude','processing time'}); cx4channel=0;
+     % set(36,'name','4channel');
+    % Set y-axis limits for each channel explicitly
+   for i = 1:4
+    ax = ancestor(hhScopes4channel(i), 'axes');  % Get the parent axes of the AnimatedLine
+    set(ax, 'YLim', [-a(i), a(i)]);             % Set the y-axis limits for the axes
+   end
+    a=[100,100,100,20] ;   hhScopes4channelAPI =IniScopes4Channels(38,800,-a,a,'4channel API',{'Roll','Pitch','Altitude','processing time'}); cx4channelAPI=0;
+    % set(37,'name','4channel API');
+   for i = 1:4
+    bx = ancestor(hhScopes4channelAPI(i), 'axes');  % Get the parent axes of the AnimatedLine
+    set(bx, 'YLim', [-a(i), a(i)]);             % Set the y-axis limits for the axes
+   end
     OtherInitializations() ; % Other matters you may want to initialize.
     
     % ------------------------------------------------
@@ -155,28 +202,41 @@ function main01(ThisDataset)
     % session is paused or running.
 
     % Bias estimation parameters
-    biasEstimationTime = 5;   % 5 seconds of static data for calibration
-    biasSamples = [];         % Stores gyroscope measurements during calibration
-    biasComputed = false;     % Flag to indicate if bias is computed
+    biasEstimationTime = 4;   % 4 seconds of static data for calibration
+    biasSamples = [0;0;0];         % Stores gyroscope measurements during calibration
     gyroBias = [0; 0; 0];     % Placeholder for estimated bias values
-
+    totaltime=0;
+    % P = (deg2rad(1)^2) * eye(3);  % Initial small uncertainty
+    % std=4;
     % ---------------------------------------------------------
     
     % these API functions are for using the state equation of the Attitude
     ContextAttitude1Predictor=API.i.IniAttitudePredictor(5);
+     % --- Add B7 Variables ---
+  % Calibrated Predictor (Ground Truth)
+  ContextCalibrated = API.i.IniAttitudePredictor(5); % 5s calibration
+  AttitudeCalibrated = deg2rad([-1.5; -0.5; -2.5]); % Initial attitude
+    
+  % Uncalibrated Predictor (No calibration) 
+  AttitudeUncalibrated = deg2rad([0; 0; 0]);
+    
     % ContextAttitude2Predictor=API.i.IniAttitudePredictor(5);
     % if I wanted to tell that API function, that I do not want it to do any calibatrion:
     % I would specify DurationOfcalibration=0.
     % ContextAttitude1Predictor=API.i.IniAttitudePredictor(0);
     
-    runAttitudePredictor    =API.i.runAttitudePredictor;          % "pointer" to function that runs the predictor. 
-    %Original attitude variables
-    OAttitude00 = [0;0;0];  % proposed initial attitude.
-    Attitude2=OAttitude00;  % initial Attitude1.
+    runAttitudePredictor=API.i.runAttitudePredictor;          % "pointer" to function that runs the predictor. 
     roll=0;yaw=0;pitch=0;
     % For verification purpose
     Attitude00 = [0;0;0];  % proposed initial attitude.
     Attitude1=Attitude00;  % initial Attitude1.
+    Attitude2=Attitude00;  % initial Attitude2.
+    % Attitude3=Attitude00;
+    Attitudedisc=Attitude00;  % initial Attitudedisc.
+    % AttitudeEKFdisc=Attitude00;  % initial Attitudedisc.
+    event1=[];
+    event2=[];
+    event3=[];
     % Attitude1 : predicted attitude. I may have other instances, using other approaches.
     % we may have Attitude1 for the calibrated case
     % and Attitude2 for uncalibrated one, just to compare during operation, the benefits of the calibration. 
@@ -189,21 +249,7 @@ function main01(ThisDataset)
     % A good attitude predition (calibrated one), would show that fact for the estimated attitude.
     % That characteristic can be a good verifiction for knowing if your implementation is not working badly.
     % in addition to comapring with the estimates of the provided API one.
-    
-    function bias(gyrobias,time,Biastime,biassamples,gxyz)
-        if time <= Biastime 
-                biassamples = [biassamples, gxyz];
-                biasSamples=biassamples;
-                 % Compute bias as mean of collected samples
-        elseif(time>Biastime)
-            gyrobias = mean(biasSamples,2); 
-            gxyz = gxyz - gyrobias;  % Remove bias from gyroscope readings
-            if(print==0)
-            disp("Calibration ends. Calculated GyroBiasses=["+rad2deg(gyrobias(1))+","+rad2deg(gyrobias(2))+","+rad2deg(gyrobias(3))+"]d/s");
-            print=+1;
-            end
-        end
-    end
+   
     % ----------------------------------------------------------------
     function NewAttitude = IntegrateOneStepOfAttitude( gyros, dt, CurrentAttitude )
         % for a small delta time , dt
@@ -221,7 +267,44 @@ function main01(ThisDataset)
         pitch = ang(2) + dt * (wy*cosang1 - wz*sinang1);
         yaw = ang(3) + dt * ((wy*sinang1 + wz*cosang1)/cosang2) ; %(*)
         % -------------------------------
-        NewAttitude= [roll,pitch,yaw]; % new global Roll, Pitch, Yaw (at time t+dt)
+        NewAttitude= [roll;pitch;yaw]; % new global Roll, Pitch, Yaw (at time t+dt)
+    end
+
+    % function  x_hat=IntegrateOneStepOfEKFAttitude(gxyz,dt,x_hat)
+    % % att = [roll; pitch; yaw]
+    % phi = x_hat(1); theta = x_hat(2);
+    % c1 = cos(phi); s1 = sin(phi);
+    % c2 = cos(theta); s2 = sin(theta);
+    % 
+    % % Jacobian of attitude wrt gyro inputs
+    % Ju = dt * [
+    %     1,      s1 * tan(theta),      c1 * tan(theta);
+    %     0,      c1,                   -s1;
+    %     0,      s1 / c2,              c1 / c2
+    % ];
+    % 
+    % % EKF Prediction Step
+    % Q = Ju * (deg2rad(4)^2 * eye(3)) * Ju';        % Process noise covariance
+    % x_hat = IntegrateOneStepOfAttitude(gxyz, dt, x_hat);  % State prediction
+    % Jx = eye(3);                                   % Approximate ∂f/∂x as identity
+    % P = Jx * P * Jx' + Q;                          % Covariance update
+    % end
+
+    function [gxyz,gyrobias]=bias(gyrobias,time,Biastime,biassamples,gxyz)
+        if time <= Biastime 
+             biassamples = [biassamples, gxyz];
+                biasSamples=biassamples;
+                 % Compute bias as mean of collected samples
+        elseif(time>Biastime)
+            gyrobias = mean(biasSamples,2); 
+            gxyz = gxyz - gyrobias;  % Remove bias from gyroscope readings
+            Attitude2 = IntegrateOneStepOfAttitude( gxyz, dt, Attitude2 );
+            % Attitude3=IntegrateOneStepOfEKFAttitude(gxyz,dt,Attitude3);
+            if(print==0)
+            disp("Calibration ends. Calculated GyroBiasses=["+rad2deg(gyrobias(1))+","+rad2deg(gyrobias(2))+","+rad2deg(gyrobias(3))+"]d/s");
+            print=+1;
+            end
+        end
     end
 
     % events' LOOP!
@@ -246,7 +329,7 @@ function main01(ThisDataset)
         [id,r,ti]=GetEvnt();   % get new/next event (measurement,etc).
         t=double(ti)/10000-t00;   % time since initial time, in seconds.
         dt=t-t0; t0=t;   % elapsed time since previous event.
-        
+
         % when you receive an event, you know you are at a new time (time t)
         % the "dt" since the previous event is now in the variable dt.
         % dt will always be <=5ms, because, in our platform, there is a source of events that works at ~200HZ (the IMU).
@@ -257,13 +340,42 @@ function main01(ThisDataset)
         % all our state equations,  X(tnow) = X(previousTime) +dt*F( X ......)
         % using for each of them, its discrete time version.
         
-        
         % for the case of using a model for estimating the 3D attitude
         % based on the IMU gyroscopes, we should run it here.
         % "Attitude prediction": I use the term "prediction" because we simply exploit a model ("open loop estimation".
-        
         [Attitude1,ContextAttitude1Predictor,ok]=runAttitudePredictor(Attitude1,gxyz,dt,ContextAttitude1Predictor);
-        Attitude2 = IntegrateOneStepOfAttitude( gxyz, dt, Attitude1 );
+        % --- Run Predictors ---
+        % Calibrated (Ground Truth)
+        [AttitudeCalibrated, ContextCalibrated, ~] = runAttitudePredictor(AttitudeCalibrated, gxyz, dt, ContextCalibrated);
+    
+        % Un` (Only for t > 15)
+        if t > 15
+        [AttitudeUncalibrated] = IntegrateOneStepOfAttitude(gxyz, dt, AttitudeUncalibrated);
+        end
+
+        % --- EKF Prediction Step (t > 15) ---
+        if t > 15 && ~ekf_started
+        ekf_started = true;
+        Xe = deg2rad([0; 0; 0]); % Re-initialize
+        P = (deg2rad(30)^2) * eye(3);
+        end
+        if ekf_started
+        % Get Jacobians using API
+        [Jx, Ju] = API.k.MkJxJu(Xe, gxyz, dt);
+        % Process noise (gyro std = 3 deg/s -> rad/s)
+        gyro_std = deg2rad(3);
+        Q = Ju * (gyro_std^2 * eye(3)) * Ju'*dt;
+        % Predict state
+        Xe = IntegrateOneStepOfAttitude(gxyz, dt, Xe);
+        % Predict covariance
+        P = Jx * P * Jx' + Q;
+        end
+          % The "5" : The predictor will use 5 seconds of initial calibration
+      % During the first 5 seconds, collect gyroscope bias data 
+      % in rad/second, 3D gyroscopes. 
+           [gxyz,gyroBias]=bias(gyroBias,t,biasEstimationTime,biasSamples,gxyz);
+            Attitudedisc=Attitude1-Attitude2;
+            % AttitudeEKFdisc=Attitude1-Attitude3;
        % [Attitude2,ContextAttitude2Predictor,ok]=runAttitudePredictor(Attitude2,gxyz,dt,ContextAttitude2Predictor);
         % Structure your function this way:  Xb = MyStateEquation(Xa, u, dt, CertainParamaters) 
         % in which:
@@ -307,20 +419,15 @@ function main01(ThisDataset)
         switch(id),
          %....................... IMU data
           case(1),   % it is a sample from IMU.
+              tic;
            %data in IMU event is 9x1, [axyz,gxyz,mxyz] , class single.
            imuData=r; r=[];                       % last measurents from IMU
            % I may separate it in parts (accelerometers, gyroscopes, ...)
            axyz=imuData(1:3);  % in "gravities", 3D accelerometers.   
            gxyz=imuData(4:6);  % in rad/second, 3D gyroscopes. 
            mxyz=imuData(7:9) ; % 3D magnetometers.
-
-
-      % The "5" : The predictor will use 5 seconds of initial calibration
-      % During the first 5 seconds, collect gyroscope bias data 
-      % in rad/second, 3D gyroscopes. 
-           bias(gyroBias,t,biasEstimationTime,biasSamples,gxyz);
           
-
+           
            %We may update their associated ascilloscopes.
            %"Push" the gyroscopes' measurements. (3x1)
            cxG=PushScopes3Channels(hhScopesGyros,cxG,gxyz*180/pi,400);         
@@ -332,14 +439,27 @@ function main01(ThisDataset)
            cxAtti1=PushScopes3Channels(hhScopesAtti1,cxAtti1,Attitude1*180/pi,800);
            % attitude2, shown in an oscilloscope  (of 800 samples)
            cxAtti2=PushScopes3Channels(hhScopesAtti2,cxAtti2,Attitude2*180/pi,800);
+           % attitude3, shown in an oscilloscope  (of 800 samples)
+           % cxAtti3=PushScopes3Channels(hhScopesAtti3,cxAtti3,Attitude3*180/pi,800);
+           % attitudediscrepacy, shown in an oscilloscope  (of 800 samples)
+           cxAttidisc=PushScopes3Channels(hhScopesAttidisc,cxAttidisc,Attitudedisc*180/pi,800);
+            cxEKF = PushScopes3Channels(hhScopesEKF, cxEKF, Xe * 180/pi, 800);
+            cxGT = PushScopes3Channels(hhScopesGT, cxGT, AttitudeCalibrated * 180/pi, 800);
+            cxUncal = PushScopes3Channels(hhScopesUncal, cxUncal, AttitudeUncalibrated * 180/pi,800);            
+           % 4 channel oscilloscope, shown in an oscilloscope  (of 800 samples)
+           cx4channel=PushScopes4Channels(hhScopes4channel,cx4channel,fourchannel,800);
+           % 4 channel oscilloscope(Verification), shown in an oscilloscope  (of 800 samples)
+           cx4channelAPI=PushScopes4Channels(hhScopes4channelAPI,cx4channelAPI,fourchannelAPI,800);
+           event1=toc*1000;
            continue;   
         
         %....................... RGB data
             case(3),      % type=3: RGB data from RGB camera.    
-                
+                tic;
                 %ShowRGBimage(r,hic);    % we may update the figure that shows the RGB images.
                 trgb = t;  RGB0=r; r=[]; % time and data of last RGB event, in case we needed to remember those.
                 % we may keep it, for further use. (it is the last RGB we received.)
+                event3=toc*1000;
             continue ;  
         
             
@@ -348,9 +468,10 @@ function main01(ThisDataset)
             % however, the camera sends both images in that order, via USB, separated in time by few milliseconds (in average 3 or 4ms).
         %....................... Depth data
             case(2),     % type=2: Depth data from camera.
+             tic;
              tdepth = t; Depth=r; r=[];   % time and data of last camera Depth event.
              SharedData.Depth=Depth;
-             SharedData.Attitude1=Attitude1;
+             SharedData.Attitude2=Attitude2;
              % All this section may be put in a function, to organize the code.
              
             % --------------------------------
@@ -375,15 +496,21 @@ function main01(ThisDataset)
              % so that all figures do alsways show RGB,Depth and points that
              % correspond to the same scan.
              %ShowStabilized3DView(Depth,Attitude1);
+                [roll,pitch,altitude,rollAPI,pitchAPI,altitudeAPI]=ROIvalues(Depth,ROI);
+                if roll~=0 && pitch~=0 && altitude~=0
+                fourchannel=[rad2deg(roll);rad2deg(pitch);altitude;(event1+event2+event3)];
+                fourchannelAPI=[rad2deg(rollAPI);rad2deg(pitchAPI);altitudeAPI;(event1+event2+event3)];
+                end
+
 
              % We may check if the user wanted to select ROI, etc, etc,
              % even when the playback session is not paused.
              if (FFF(6)),
-                if (FFF(6))==1,   ChooseROIandEstimatePlane(tdepth);  FFF(2)=1;    end;
+                if (FFF(6))==1,   ChooseROIandEstimatePlane(Depth);  FFF(2)=1;    end;
                 %  we may check for other values of the flag, for other  purposes.
                 FFF(6)=0; % reset it.
              end;
-              
+             event2=toc*1000;
              % if we set FFF(2)=1, we are pausing the playback, 
              % in this case, we wanted to pause it, after attending that
              % user request.
@@ -424,8 +551,9 @@ function main01(ThisDataset)
               % so we can use "break", to break the WHILE LOOP.
             continue;
              %.......................
-        end;  % end SWITCH
+         end;  % end SWITCH
         end;  % end events' LOOP
+        fprintf("Depth processing time=%2f, Total processing time=%.2f ms\n",mean(event2),mean(event1+event2+event3));
         %...........................................................
         disp('END');
         delete(hButtons);   % I delete GUI's buttons that will not be used anymore.
@@ -442,7 +570,7 @@ function SetSomeFictitiousIMUBiases()
  % here I wanted to increase the bias of each gyro, by +0.5degree/second.
  % NO bias added to tge accelerometers.
  
-   b = 3*pi/180; a=0;
+   b = Bias*pi/180; a=0;
    ok=API.d.PretendExtraIMUBiases([a;a;a;  b;b;b   ]);% <------------------
    % useful,for further testing of your calibration approach.
  
@@ -456,7 +584,7 @@ function OtherInitializations()
 
 end
 
-function ShowStabilized3DView(Depth,Attitude1)
+function ShowStabilized3DView(Depth,Attitude2)
     if isempty(Depth)
         disp('No depth data available.');
         return;
@@ -469,9 +597,9 @@ function ShowStabilized3DView(Depth,Attitude1)
     [zz, xx] = API.e.Rotate2D(zz, xx, 18.5 * pi / 180); % Compensate for camera tilt
 
     % Construct rotation matrix from estimated attitude
-    roll = Attitude1(1); % Roll in radians
-    pitch = Attitude1(2); % Pitch in radians
-    yaw = Attitude1(3); % Yaw in radians
+    roll = Attitude2(1); % Roll in radians
+    pitch = Attitude2(2); % Pitch in radians
+    yaw = Attitude2(3); % Yaw in radians
 
     Rz = [cos(yaw), -sin(yaw), 0; sin(yaw), cos(yaw), 0; 0, 0, 1];
     Ry = [cos(pitch), 0, sin(pitch); 0, 1, 0; -sin(pitch), 0, cos(pitch)];
@@ -496,7 +624,8 @@ function ShowStabilized3DView(Depth,Attitude1)
     zlabel('Z');
     title('Stabilized 3D View');
     grid on;
-    axis equal;
+    daspect([1, 1, 1]);  % Set equal scaling for x, y, and z axes
+   % axis equal;
 end
 
 % ----------------------------------------------------------
@@ -527,8 +656,8 @@ return;
 end
 function MyCallbackB(a,b)
     Depth=SharedData.Depth;
-    Attitude1=SharedData.Attitude1;
-    ShowStabilized3DView(Depth,Attitude1);
+    Attitude2=SharedData.Attitude2;
+    ShowStabilized3DView(Depth,Attitude2);
 end
     
 % ----------------------------------------------------------
@@ -558,11 +687,97 @@ function hh=CreateControlsInFigure(figu)
  
  return;
 end
+function H = ComputeJacobianOfNormal(eul,walltype,H)
+    % Inputs:
+    % - eul: [roll; pitch; yaw] in radians (current state estimate)
+    % - h_global: known normal in global frame (3x1)
+    %
+    % Output:
+    % - H: Jacobian matrix (3x3) dh/dX where:
+    %      h is the expected normal in platform CF
+    %      X is the state vector [roll; pitch; yaw]
+
+    roll = eul(1);   % roll
+    pitch = eul(2); % pitch
+    yaw = eul(3);   % yaw
+
+
+    % Compute analytical partial derivatives of h_platform w.r.t. euler angles
+    if walltype==1
+     %Hxyz'
+     H(1,1)=cos(roll)*sin(yaw) - cos(yaw)*sin(roll)*sin(pitch);
+     H(1,2)=cos(yaw)*cos(roll)*cos(pitch);
+     H(1,3)=cos(yaw)*sin(roll) - cos(roll)*sin(yaw)*sin(pitch);
+     H(2,1)=- cos(yaw)*cos(roll) - sin(yaw)*sin(roll)*sin(pitch);
+     H(2,2)=cos(roll)*cos(pitch)*sin(yaw);
+     H(2,3)=sin(yaw)*sin(roll) + cos(yaw)*cos(roll)*sin(pitch);
+     H(3,1)=-cos(pitch)*sin(roll);
+     H(3,2)=-cos(roll)*sin(pitch);
+     H(3,3)=0;
+     H=H';
+   
+     elseif walltype==2
+         H(1,1)=0;
+         H(1,2)=cos(yaw)*sin(pitch);
+         H(1,3)=cos(pitch)*sin(yaw);
+         H(2,1)=-sin(roll)*sin(yaw) - cos(roll)*cos(yaw)*sin(pitch);
+         H(2,2)=-cos(pitch)*cos(yaw)*sin(roll);
+         H(2,3)=cos(roll)*cos(yaw) + sin(pitch)*sin(roll)*sin(yaw);
+         H(3,1)=cos(yaw)*sin(pitch)*sin(roll) - cos(roll)*sin(yaw);
+         H(3,2)=-cos(pitch)*cos(roll)*cos(yaw);
+         H(3,3)=cos(roll)*sin(pitch)*sin(yaw) - cos(yaw)*sin(roll);
+
+  
+    end
     
+end
 % NOTE: You may use GUIDE, a tool for implementing GUIs, in place of using the
 % basic approach we have here in this example program.
 % you decide that. 
-
+    function ThisOne = InferWhichWall(NormalVectorOfFlatPatch, GuessOfCurrentAttitude, Tolerance)
+    % % Convert attitude from degrees to radians if needed
+    NormalVectorOfFlatPatch = NormalVectorOfFlatPatch / norm(NormalVectorOfFlatPatch);
+    if max(abs(GuessOfCurrentAttitude)) > 2*pi
+        GuessOfCurrentAttitude = deg2rad(GuessOfCurrentAttitude);
+    end
+    
+    % Extract roll, pitch, yaw from attitude guess
+    roll = GuessOfCurrentAttitude(1);
+    pitch = GuessOfCurrentAttitude(2);
+    yaw = GuessOfCurrentAttitude(3);
+    
+    % Create rotation matrix from platform CF to GCF
+    Rz = [cos(yaw), -sin(yaw), 0; sin(yaw), cos(yaw), 0; 0, 0, 1];
+    Ry = [cos(pitch), 0, sin(pitch); 0, 1, 0; -sin(pitch), 0, cos(pitch)];
+    Rx = [1, 0, 0; 0, cos(roll), -sin(roll); 0, sin(roll), cos(roll)];
+    R = Rz * Ry * Rx;
+    
+    % Transform normal vector from platform CF to GCF
+    n_gcf = R * NormalVectorOfFlatPatch;
+    
+    % Define reference normal vectors for known surfaces in GCF
+    floor_normal = [0; 0; 1];      % XY plane (floor)
+    wall1_normal = [-1; 0; 0];     % YZ plane (front wall/door)
+    wall2_normal = [0; 1; 0];      % XZ plane (left wall)
+    wall3_normal = [0; -1; 0];     % XZ plane (right wall)
+    
+    safe_dot = @(a, b) max(min(dot(a, b), 1), -1);
+    % Calculate angles between detected normal and reference normals
+    angle_floor = acos(safe_dot(n_gcf, floor_normal));
+    angle_wall1 = acos(safe_dot(n_gcf, wall1_normal));
+    angle_wall2 = acos(safe_dot(n_gcf, wall2_normal));
+    angle_wall3 = acos(safe_dot(n_gcf, wall3_normal));
+    
+    % Find which reference normal is closest within tolerance
+    [min_angle, idx] = min([angle_floor,angle_wall1 , angle_wall2,angle_wall3 ]);
+      disp("n_gcf:");
+disp(Rz * Ry * Rx * NormalVectorOfFlatPatch);
+    if min_angle <= Tolerance
+        ThisOne = idx;
+    else
+        ThisOne = 0; % No match found
+    end
+end
 function [myok, myvn, myxyz0]=MyGtNormalV(xx, yy, zz, tole)
     % Ensure vectors are column
     xx = xx(:); yy = yy(:); zz = zz(:);
@@ -621,7 +836,6 @@ function [myok, myRollPitch] = MyGuessRollPitchFromVector(vn)
     %   RollPitch: [roll; pitch] in radians
 
     vn = vn(:);  % ensure column vector
-    disp(norm(vn));
     % Check if input is valid
     if norm(vn) < 0.99 || norm(vn) > 1.01
         vn = vn / norm(vn);  % normalize
@@ -659,18 +873,9 @@ end
 % this function asks the use to choose a ROI in the RGB figure,
 % then use its associated 3D points to estimate a plane, if that does
 % exists.
-    
- function ChooseROIandEstimatePlane(Depth)
-    figuRGB = 10;  % in this figure is the RGB image to use to select the ROI, visually.
-    % user selects ROI, manually, from specified figure (in which we should have an RGB image or a Depth image)
-    % we can use this API function, to select the ROI. ( API.b.SelectROI()  % )
-    disp('From the RGB image, choose a rectangular region that seems to be of the floor');
-    r=API.b.SelectROI(figuRGB);    
-    if (r.ok<1), return ;  end; % bad ROI
-    % r.pp = [ [ u1;u2],[v1;v2]]; so that that region of pixels is [u1->u2] horizontal, and [v1->v2] vertical.
-    p=r.pp; 
-    u12=p(:,1);   % horizontal interval
-    v12=p(:,2);   % vertical interval
+ function [roll,pitch,altitude,rollAPI,pitchAPI,altitudeAPI]=ROIvalues(Depth,ROI) % profile on;
+    u12=ROI(:,1);   % horizontal interval
+    v12=ROI(:,2);   % vertical interval
 
     % Use API function for obtaining the 3D points that do correspond to a pixels ROI
     [ok,xx,yy,zz]=API.b.Gt3DPtsFromROI(u12,v12,Depth,1);   
@@ -678,16 +883,23 @@ end
         % NO POINTS in ROI?
     end; 
     % compensate pitch of camera in platform's chassis.
-    [zz,xx]=API.e.Rotate2D(zz,xx,18.5*pi/180);
-    % now we have the points expressed in platform's CF.
+    % Precompute rotation angle and matrix
+    angle = 18.5 * pi / 180;  % Precompute angle in radians
+    rotationMatrix = [cos(angle), -sin(angle); sin(angle), cos(angle)];  % Precompute rotation matrix
+
+    % Apply rotation to 3D points (vectorized)
+    rotatedPoints = rotationMatrix * [zz(:)'; xx(:)'];  % Vectorized rotation
+    zz = rotatedPoints(1, :);
+    xx = rotatedPoints(2, :);
 
     % Plot the selected 3D points, and then calculate normal vector (if that does exist).
-    figure(77);  %e.g., in fig 77.
-    clf();       % clear possible previous content.    
-    plot3(xx,yy,zz,'.');  
-    axis equal;     % keeps equal scale for x,y,z
+    % figure(77);  %e.g., in fig 77.
+    % clf();       % clear possible previous content.    
+    % plot3(xx,yy,zz,'.');  
+    % daspect([1, 1, 1]);  % Set equal scaling for x, y, and z axes
+    % %axis equal;     % keeps equal scale for x,y,z
 
-    %-------------------------
+  
     % now, we try to find if those points seem to defina a flat patch.
     % so we try to infer plane, for the pixels inside that ROI.
      tole = 20 ; % tolerance=20mm = 2cm   (points distances to that plane should be < 2cm
@@ -703,14 +915,143 @@ end
      altitude_cm = -altitude_mm / 10;
      % validate using API (for verification only)
      APIaltitude_cm = API.e.DistanceToPlane(myvn, myxyz0, [0;0;0])/10;  % returns signed distance
-      if (ok<1),
-        disp("Error from API function:");
-        disp('no plane => no solution');
-        title('uhh?, it is not a planar surface!');
-        return  ;    % NO good approximating PLANE POSSIBLE
-     end;
-     if (myok<1),
-         disp("Error from my function:")
+    % if plane estimated ok, now we estimate roll and pitch. Normal vector in variable "vn".
+      [ok,RollPitch2] = API.e.GuessRollPitchFromVector(vn,1,0.2);    %<--------- THIS MUST BE IMPLEMENTED by students.
+      [myok, myRollPitch2] = MyGuessRollPitchFromVector(myvn);
+
+      wallType = InferWhichWall(myvn, SharedData.Attitude2, deg2rad(45));
+
+    %    % --- EKF Update Step ---
+    % if ekf_started && (wallType == 1 || wallType == 2)
+    %     % Measurement noise (adjust based on plane fit tolerance)
+    %     R = diag([(0.05)^2, (0.05)^2, (0.05)^2]); % Example values
+    % 
+    %     % Expected normal in GcomputeJaCF
+    %     if wallType == 1 % Floor (XY)
+    %         z = myvn; % Measured normal (platform CF)
+    %         h = [0; 0; 1]; % Expected normal in GCF
+    %     elseif wallType == 2 % Wall (YZ)
+    %         z = myvn;
+    %         h = [-1; 0; 0];
+    %     end
+    % 
+    %     % Rotate expected normal to platform CF using current attitude
+    %     R_matrix = eul2rotm(Xe'); % Euler to rotation matrix
+    %     h_platform = R_matrix' * h; % Expected normal in platform CF
+    % 
+    %     % % Compute Jacobian H (derivative of h_platform w.r.t. Xe)
+    %     % [H, ~] = API.k.MkHkHw(Xe, h); % Use API function
+    %     H=ComputeJacobianOfNormal(Xe, h_platform,wallType);
+    %     % Kalman gain
+    %     K = P * H' / (H * P * H' + R);
+    % 
+    %     % Update state and covariance
+    %     Xe = Xe + K * (z - h_platform);
+    %     P = (eye(3) - K * H) * P;
+    % end
+    % During EKF update when a surface is detected:
+    if ekf_started && (wallType == 1 || wallType == 2)
+    H = zeros(3,3);
+    % Expected normal in GCF
+    if wallType == 1 % Floor (XY)
+        h_global = [0; 0; 1]; 
+        % Measurement noise
+        R = diag([0.05^2, 0.05^2, 0.05^2]);
+    
+        % Expected measurement (normal in platform CF)
+        R_matrix = eul2rotm(Xe');
+        h_expected = R_matrix' * h_global;
+        % Compute Jacobian
+        H = ComputeJacobianOfNormal(Xe,wallType,H);
+        % Kalman gain and update
+        K = P * H' / (H * P * H' + R);
+        Xe = Xe + K * (myvn - h_expected);
+        P = (eye(3) - K * H) * P;
+
+    
+    elseif wallType==2% Wall (YZ)
+       h_global = [-1; 0; 0]; 
+               % Measurement noise
+        R = diag([0.05^2, 0.05^2, 0.05^2]);
+    
+        % Expected measurement (normal in platform CF)
+        R_matrix = eul2rotm(Xe');
+        h_expected = R_matrix' * h_global;
+        % Compute Jacobian
+        H = ComputeJacobianOfNormal(Xe,wallType,H);
+        % Kalman gain and update
+        K = P * H' / (H * P * H' + R);
+        Xe = Xe + K * (myvn - h_expected);
+        P = (eye(3) - K * H) * P;
+
+    end
+    end
+      roll=myRollPitch2(1);
+      pitch=myRollPitch2(2);
+      altitude=altitude_cm;
+      rollAPI=RollPitch2(1);
+      pitchAPI=RollPitch2(2);
+      altitudeAPI=APIaltitude_cm;
+     % [ok,vn,xyz0]: if OK>0, then "vn" is the normal vector of the
+     % approximating plane, and "xyz0" is the centre of geometry of the
+     % points,
+      myvn=myvn*100;                     % increase its lenght, so it can be seen. 
+      % show vector in figure of selected
+      % points.................................................................................................................................................................................................................................................................................................................................................................................................................................
+    return ;
+end       
+
+ function ChooseROIandEstimatePlane(Depth)
+    figuRGB = 10;  % in this figure is the RGB image to use to select the ROI, visually.
+    % user selects ROI, manually, from specified figure (in which we should have an RGB image or a Depth image)
+    % we can use this API function, to select the ROI. ( API.b.SelectROI()  % )
+    disp('From the RGB image, choose a rectangular region that seems to be of the floor');
+    r=API.b.SelectROI(figuRGB);    
+    if (r.ok<1), return ;  end; % bad ROI
+    % r.pp = [ [ u1;u2],[v1;v2]]; so that that region of pixels is [u1->u2] horizontal, and [v1->v2] vertical.
+    ROI=r.pp; 
+    u12=ROI(:,1);   % horizontal interval
+    v12=ROI(:,2);   % vertical interval
+
+    % Use API function for obtaining the 3D points that do correspond to a pixels ROI
+    [ok,xx,yy,zz]=API.b.Gt3DPtsFromROI(u12,v12,Depth,1);   
+    if (ok<1),  return ; 
+        % NO POINTS in ROI?
+    end; 
+    % compensate pitch of camera in platform's chassis.
+    % Precompute rotation angle and matrix
+    angle = 18.5 * pi / 180;  % Precompute angle in radians
+    rotationMatrix = [cos(angle), -sin(angle); sin(angle), cos(angle)];  % Precompute rotation matrix
+
+    % Apply rotation to 3D points (vectorized)
+    rotatedPoints = rotationMatrix * [zz(:)'; xx(:)'];  % Vectorized rotation
+    zz = rotatedPoints(1, :);
+    xx = rotatedPoints(2, :);
+
+    % Plot the selected 3D points, and then calculate normal vector (if that does exist).
+    figure(77);  %e.g., in fig 77.
+    clf();       % clear possible previous content.    
+    plot3(xx,yy,zz,'.');  
+    daspect([1, 1, 1]);  % Set equal scaling for x, y, and z axes
+    %axis equal;     % keeps equal scale for x,y,z
+
+  
+    % now, we try to find if those points seem to defina a flat patch.
+    % so we try to infer plane, for the pixels inside that ROI.
+     tole = 20 ; % tolerance=20mm = 2cm   (points distances to that plane should be < 2cm
+
+     % This API function does estimate a plane that fits the selected points.
+     % YOU MUST implement your version. 
+     % this API function is ONLY for validating your results.
+     % **** YOU MUST implement your version of tis function ****.
+     [ok,vn,xyz0]=API.p.GtNormalV(xx,yy,zz,tole);  % 
+     [myok,myvn,myxyz0]=MyGtNormalV(xx, yy, zz, tole);
+     % calculate distance to plane from origin
+     altitude_mm = dot(myvn, myxyz0);  % mm
+     altitude_cm = -altitude_mm / 10;
+     % validate using API (for verification only)
+     APIaltitude_cm = API.e.DistanceToPlane(myvn, myxyz0, [0;0;0])/10;  % returns signed distance
+      if (ok<1||myok<1),
         disp('no plane => no solution');
         title('uhh?, it is not a planar surface!');
         return  ;    % NO good approximating PLANE POSSIBLE
@@ -723,24 +1064,31 @@ end
       [ok,RollPitch2] = API.e.GuessRollPitchFromVector(vn,1,0.2);    %<--------- THIS MUST BE IMPLEMENTED by students.
       [myok, myRollPitch2] = MyGuessRollPitchFromVector(myvn);
       % **** YOU MUST implement your version of tis function ****.
-      %  if (ok<1), 
-      %     disp('no roll and pitch estimation.');
-      %     return  ; 
-      % end; 
-      % if (myok<1), 
-      %     disp('no roll and pitch estimation.');
-      %     return  ; 
-      % end;  % NO 
+      
       % Roll and Pich have been estimated successfully.
      disp('if that plane were the floor, we could estimate platform ROLL and PITCH.')
       disp("For verification purpose:");
       fprintf('normal=[%.3f,%.3f,%.4f];[roll,pitch]=[%.1f°,%.1f°],Altitude=%.2f cm\n',vn,RollPitch2*180/pi,  APIaltitude_cm); 
       disp("Calculated output:");
       fprintf('normal=[%.3f,%.3f,%.4f];[roll,pitch]=[%.1f°,%.1f°],Altitude=%.2f cm\n',myvn,myRollPitch2*180/pi,altitude_cm); 
+        % Call the wall inference function
+        wallType = InferWhichWall(myvn, SharedData.Attitude2, deg2rad(45));
+     % Display results
+    wallNames = { 'no successfull association','floor','wall1 (front/door)','wall2 (left)','wall3 (right)'};
+    disp(['Detected surface: ', wallNames{wallType+1}]);
+
       myvn=myvn*100;                     % increase its lenght, so it can be seen. 
       % show vector in figure of selected
       % points.................................................................................................................................................................................................................................................................................................................................................................................................................................
-
+  % hold on;
+  %   line([myxyz0(1), myxyz0(1) + myvn(1)], ...
+  %        [myxyz0(2), myxyz0(2) + myvn(2)], ...
+  %        [myxyz0(3), myxyz0(3) + myvn(3)], ...
+  %        'Color', 'r', 'LineWidth', 2);  % Use `line` for faster rendering
+  %   title('OK, 3D points define a planar patch!');
+  %   hold off;
+      % 
+    
       hold on;
       hq=quiver3(myxyz0(1),myxyz0(2),myxyz0(3),myvn(1),myvn(2),myvn(3));   
       set(hq,'AutoScale','off','linewidth',3);
